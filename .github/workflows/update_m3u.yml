@@ -2,10 +2,9 @@ name: Update M3U Playlist
 
 on:
   schedule:
-    - cron: '0 */3 * * *' # Chạy tự động 3 tiếng/lần (tùy chỉnh)
+    - cron: '0 */3 * * *' # Chạy tự động 3 tiếng/lần
   workflow_dispatch:     # Nút bấm chạy thủ công
 
-# CẤP QUYỀN GHI CHO GITHUB ACTION (RẤT QUAN TRỌNG)
 permissions:
   contents: write
 
@@ -29,12 +28,12 @@ jobs:
 
       - name: Run Python script
         run: |
-          python scraper.py # Thay main.py bằng tên file python trong repo
+          python main.py
 
       - name: Commit and Push M3U file
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add *.m3u
+          git add saoke_playlist.m3u
           git diff --staged --quiet || (git commit -m "Auto update M3U playlist [skip ci]" && git push)
           
