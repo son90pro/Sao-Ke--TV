@@ -1,37 +1,40 @@
-name: Tự động cập nhật Saoke M3U
+name: Auto Update SaoKe TV M3U
 
 on:
   schedule:
-    - cron: '0 */2 * * *'
+    # Tự động chạy mỗi 30 phút
+    - cron: '*/30 * * * *'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  update-playlist:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests beautifulsoup4
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
-    - name: Run Scraper Script
-      run: python scraper.py
+      - name: Run Scraper
+        run: python scraper.py
 
-    - name: Auto Commit and Push M3U
-      uses: stefanzweifel/git-auto-commit-action@v5
-      with:
-        commit_message: "Auto update playlist [skip ci]"
-        file_pattern: "saoketv.m3u"
-        
+      - name: Commit and Push
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add saoketv.m3u
+          git commit -m "Auto update saoketv.m3u [skip ci]" || exit 0
+          git push
+          
