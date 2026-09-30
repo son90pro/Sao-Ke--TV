@@ -23,17 +23,32 @@ def fetch_saoke_data(api_url):
     return []
 
 
-def generate_m3u(lives_list, live_only=False):
-  """Tạo danh sách M3U chuẩn hóa giao diện và tương thích luồng phát HD/SD."""
+def format_match_time(raw_time):
+  """Chuyển đổi timestamp linh hoạt (cả 10 số và 13 số) sang chuỗi HH:MM DD/MM."""
+  if not raw_time:
+    return ''
+  try:
+    val = float(raw_time)
+    # Nếu là timestamp mili-giây (13 chữ số) -> chuyển về giây
+    if val > 1e11:
+      val /= 1000.0
+    dt = datetime.fromtimestamp(val)
+    return dt.strftime('%H:%M %d/%m')
+  except Exception:
+    return str(raw_time)
 
-  # Sắp xếp: Trận Live lên đầu -> Sắp xếp theo thứ tự thời gian tăng dần
+
+def generate_m3u(lives_list, live_only=False):
+  """Tạo danh sách M3U chuẩn hóa ngày giờ và tương thích luồng phát HD/SD."""
+
+  # Sắp xếp: Trận Live lên đầu -> Các trận tiếp theo xếp theo thời gian tăng dần
   lives_list.sort(
       key=lambda x: (0 if x.get('status') == 'live' else 1, x.get('time', 0))
   )
 
   m3u_lines = ['#EXTM3U']
 
-  # Cấu hình User-Agent và Referer chuẩn CDN SaoKê
+  # User-Agent & Referer chuẩn để mở khóa luồng HD trên CDN SaoKê
   user_agent = (
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
       ' (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
@@ -53,7 +68,7 @@ def generate_m3u(lives_list, live_only=False):
     team_a = team_a_info.get('name', 'Đội A').strip()
     team_b = team_b_info.get('name', 'Đội B').strip()
 
-    # Lấy Logo Đội nhà -> Đội khách -> Logo Giải đấu
+    # Logo đội bóng
     match_logo = (
         team_a_info.get('picture')
         or team_a_info.get('logo')
@@ -62,15 +77,8 @@ def generate_m3u(lives_list, live_only=False):
         or match.get('league', {}).get('picture', '')
     )
 
-    # --------------------------------------------------------------------------
-    # FIX 1: BỔ SUNG NGÀY & GIỜ CHO CÁC TRẬN ĐANG LIVE
-    # --------------------------------------------------------------------------
-    match_time_ms = match.get('time', 0)
-    time_str = ''
-    if match_time_ms:
-      time_dt = datetime.fromtimestamp(match_time_ms / 1000)
-      time_str = time_dt.strftime('%H:%M %d/%m')
-
+    # 1. FIX GIỜ VÀ NGÀY CHO CẢ TRẬN LIVE LẪN SẮP ĐÁ
+    time_str = format_match_time(match.get('time'))
     if status == 'live':
       status_tag = (
           f'🔴 [LIVE {time_str}]' if time_str else '🔴 [LIVE]'
@@ -78,7 +86,7 @@ def generate_m3u(lives_list, live_only=False):
     else:
       status_tag = f'⏰ [{time_str}]' if time_str else '⏰'
 
-    # Thu thập danh sách luồng phát (HD / SD)
+    # Thu thập danh sách luồng phát
     streams = []
     blvs = match.get('blvs', [])
     if blvs:
@@ -114,12 +122,10 @@ def generate_m3u(lives_list, live_only=False):
 
       extinf = (
           f'#EXTINF:-1 tvg-logo="{match_logo}"'
-          f' group-title="{league_name}", {display_name}'
+          f' group-title="{league_name}",{display_name}'
       )
 
-      # --------------------------------------------------------------------------
-      # FIX 2: BỔ SUNG CÁC THẺ HEADER ĐỂ TRÌNH PHÁT BẰNG ĐƯỢC LUỒNG HD
-      # --------------------------------------------------------------------------
+      # 2. FIX LUỒNG HD: GHI ĐÚNG CÚ PHÁP HEADER CHO TIVIMATE / OTT NAVIGATOR / VLC
       playable_url = f'{raw_url}|User-Agent={user_agent}&Referer={referer}'
 
       m3u_lines.append(extinf)
@@ -135,7 +141,7 @@ if __name__ == '__main__':
       'https://skapi.66887979.xyz/v2/saoke/live-data/6abb8e323eba0388fc1f365a?link=1'
   )
 
-  print('Đang cập nhật danh sách...')
+  print('Đang lấy dữ liệu và khởi tạo file M3U...')
   lives_data = fetch_saoke_data(API_URL)
 
   if lives_data:
@@ -143,7 +149,7 @@ if __name__ == '__main__':
     output_file = 'saoke_playlist.m3u'
     with open(output_file, 'w', encoding='utf-8') as f:
       f.write(m3u_content)
-    print(f'✅ Tạo thành công file "{output_file}"!')
+    print(f'✅ Đã tạo thành công "{output_file}"!')
   else:
-    print('❌ Không lấy được dữ liệu API.')
+    print('❌ Lỗi không nhận được dữ liệu từ API.')
     
