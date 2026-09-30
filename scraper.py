@@ -35,7 +35,7 @@ def format_match_time(raw_time):
     if val > 1e11:  # Timestamp dạng ms
       val /= 1000.0
 
-    # Ép timestamp về múi giờ UTC chuẩn rồi chuyển hướng sang Múi giờ Việt Nam (+7)
+    # Ép timestamp về UTC rồi chuyển hướng sang Múi giờ Việt Nam (+7)
     dt = datetime.fromtimestamp(val, tz=timezone.utc).astimezone(VN_TZ)
     return dt.strftime('%H:%M %d/%m')
   except Exception:
@@ -142,12 +142,15 @@ if __name__ == '__main__':
   print('Đang lấy dữ liệu và khởi tạo M3U...')
   lives_data = fetch_saoke_data(API_URL)
 
+  # Luôn khởi tạo file .m3u để tránh lỗi git
+  m3u_content = generate_m3u(lives_data) if lives_data else '#EXTM3U\n'
+
+  output_file = 'saoke_playlist.m3u'
+  with open(output_file, 'w', encoding='utf-8') as f:
+    f.write(m3u_content)
+
   if lives_data:
-    m3u_content = generate_m3u(lives_data)
-    output_file = 'saoke_playlist.m3u'
-    with open(output_file, 'w', encoding='utf-8') as f:
-      f.write(m3u_content)
     print(f'✅ Tạo thành công file "{output_file}"!')
   else:
-    print('❌ Không lấy được dữ liệu API.')
+    print(f'⚠️ Không lấy được dữ liệu API, đã tạo file "{output_file}" rỗng.')
     
