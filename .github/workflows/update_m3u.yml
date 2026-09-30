@@ -29,7 +29,7 @@ jobs:
 
       - name: Run Python script
         run: |
-          python main.py # Thay main.py bằng tên file python trong repo
+          python scraper.py # Thay main.py bằng tên file python trong repo
 
       - name: Commit and Push M3U file
         run: |
