@@ -34,7 +34,10 @@ jobs:
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          git add saoketv.m3u
-          git commit -m "Auto update saoketv.m3u [skip ci]" || exit 0
-          git push
-          
+          if [ -f saoketv.m3u ]; then
+            git add saoketv.m3u
+            git commit -m "Auto update saoketv.m3u [skip ci]" || exit 0
+            git push
+          else
+            echo "File saoketv.m3u không tồn tại, bỏ qua bước commit."
+          fi
