@@ -1,11 +1,11 @@
-name: Auto Update SaoKe TV M3U
+name: Update M3U Playlist
 
 on:
   schedule:
-    # Tự động chạy mỗi 30 phút
-    - cron: '*/30 * * * *'
-  workflow_dispatch:
+    - cron: '0 */3 * * *' # Chạy tự động 3 tiếng/lần (tùy chỉnh)
+  workflow_dispatch:     # Nút bấm chạy thủ công
 
+# CẤP QUYỀN GHI CHO GITHUB ACTION (RẤT QUAN TRỌNG)
 permissions:
   contents: write
 
@@ -14,30 +14,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install requests
 
-      - name: Run Scraper
-        run: python scraper.py
+      - name: Run Python script
+        run: |
+          python main.py # Thay main.py bằng tên file python trong repo
 
-      - name: Commit and Push
+      - name: Commit and Push M3U file
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
-          if [ -f saoketv.m3u ]; then
-            git add saoketv.m3u
-            git commit -m "Auto update saoketv.m3u [skip ci]" || exit 0
-            git push
-          else
-            echo "File saoketv.m3u không tồn tại, bỏ qua bước commit."
-          fi
+          git add *.m3u
+          git diff --staged --quiet || (git commit -m "Auto update M3U playlist [skip ci]" && git push)
+          
