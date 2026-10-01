@@ -159,10 +159,10 @@ def generate_m3u(lives_list):
       blv_part = f" ({stream['blv']})" if stream['blv'] else ''
       quality_part = f" [{stream['quality']}]" if stream['quality'] else ''
 
-      # Định dạng tên hiển thị chuẩn theo hình mẫu: 🟢 06:00 01/10 ⚽ Argentina vs Bolivia (Bút Chì) [HD]
+      # Định dạng tên hiển thị chuẩn: 🟢 06:00 01/10 ⚽ Argentina vs Bolivia (Bút Chì) [HD]
       display_name = f'{status_icon} {time_str} ⚽ {team_a} vs {team_b}{blv_part}{quality_part}'
 
-      # Nhóm kênh đặt tên "Sao Kê TV" đúng như cột danh mục bên trái ảnh mẫu
+      # Nhóm kênh đặt tên "Sao Kê TV"
       extinf = (
           f'#EXTINF:-1 tvg-logo="{match_logo}" group-title="Sao Kê'
           f' TV",{display_name}'
@@ -189,7 +189,9 @@ if __name__ == '__main__':
   print(f'📊 Tìm thấy {len(lives)} trận đấu. Đang tạo file M3U...')
   m3u_content = generate_m3u(lives)
 
-  output_filename = 'saoketv.m3u'
+  # ĐÃ SỬA: Tên file trùng khớp chính xác với git add trong GitHub Actions
+  output_filename = 'saoke_playlist.m3u'
+
   with open(output_filename, 'w', encoding='utf-8') as f:
     f.write(m3u_content)
 
