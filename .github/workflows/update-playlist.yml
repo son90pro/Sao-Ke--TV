@@ -1,10 +1,9 @@
 name: Update M3U Playlist
 
 on:
-    schedule:
-    # Tự động chạy vào phút thứ 0 của mỗi giờ (1 tiếng / lần)
-    - cron: '0 * * * *'
-  workflow_dispatch: # Cho phép bấm chạy thủ công trên GitHub khi cần
+  schedule:
+    - cron: '0 * * * *' # Chạy tự động 1 tiếng/lần (vào phút 0 mỗi giờ)
+  workflow_dispatch:     # Nút bấm chạy thủ công
 
 permissions:
   contents: write
