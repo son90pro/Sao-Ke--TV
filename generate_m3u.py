@@ -15,27 +15,24 @@ DEFAULT_MATCH_IDS = [
     "6ac59574bf3ed6c99566dc1d"
 ]
 
-# Các tên miền API của hệ thống Sao Kê TV
+# Tên miền API hệ thống
 API_DOMAINS = [
     "https://skapi.66887979.xyz",
     "https://redirect-live.66887979.xyz"
 ]
 
-# Danh sách dấu ấn trình duyệt để xoay vòng thử nghiệm
 IMPERSONATE_TARGETS = ["chrome124", "chrome120", "safari15_5", "edge101"]
 
+# Header gửi request
+REFERER_URL = "https://vip3.saoketv40.xyz/"
+USER_AGENT_STR = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "User-Agent": USER_AGENT_STR,
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
     "Origin": "https://vip3.saoketv40.xyz",
-    "Referer": "https://vip3.saoketv40.xyz/",
-    "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site"
+    "Referer": REFERER_URL
 }
 
 def get_match_ids_from_web():
@@ -56,7 +53,7 @@ def get_match_ids_from_web():
     return ids
 
 def fetch_live_data(match_ids):
-    """Truy vấn API live-data xoay vòng qua các domain và target trình duyệt"""
+    """Truy vấn API live-data"""
     test_ids = match_ids + [i for i in DEFAULT_MATCH_IDS if i not in match_ids]
 
     for mid in test_ids:
@@ -68,14 +65,14 @@ def fetch_live_data(match_ids):
                     if res.status_code == 200:
                         data = res.json()
                         if data and data.get("data", {}).get("lives"):
-                            print(f"-> THÀNH CÔNG! Lấy dữ liệu trận đấu từ {api_domain} ({target})")
+                            print(f"-> THÀNH CÔNG! Lấy dữ liệu trận đấu từ {api_domain}")
                             return data
                 except Exception:
                     continue
     return None
 
 def build_m3u(json_data):
-    """Xuất danh sách m3u theo chuẩn múi giờ Việt Nam (UTC+7)"""
+    """Xuất danh sách m3u kèm Header đính kèm để xem mượt các luồng HD/FHD"""
     m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
     
     if not json_data or "data" not in json_data or "lives" not in json_data["data"]:
@@ -97,7 +94,7 @@ def build_m3u(json_data):
         else:
             match_dt = now_vn
 
-        # Lọc các trận đấu trong ngày hôm nay và ngày mai (giờ VN)
+        # Lọc trận đấu hôm nay và ngày mai (theo giờ Việt Nam)
         if match_dt.date() not in [today, tomorrow]:
             continue
 
@@ -107,6 +104,7 @@ def build_m3u(json_data):
         logo_a = match.get("teamA", {}).get("picture", "")
         blv_name = match.get("blv", "BLV")
 
+        # Thu thập toàn bộ luồng HLS m3u8
         hls_list = match.get("hlsUrls", [])
         if not hls_list and "blvs" in match:
             for b in match.get("blvs", []):
@@ -120,18 +118,23 @@ def build_m3u(json_data):
 
         for stream in hls_list:
             quality = stream.get("name", "HD")
-            stream_url = stream.get("url", "")
+            raw_url = stream.get("url", "")
             
-            if not stream_url:
+            if not raw_url:
                 continue
+
+            # Đính kèm Referer & User-Agent trực tiếp vào URL để vượt rào CDN cho luồng HD trên TiviMate/IPTV App
+            final_stream_url = f"{raw_url}|Referer={REFERER_URL}&User-Agent={USER_AGENT_STR}"
 
             title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name}) [{quality}]"
 
             m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV",{title}\n')
-            m3u_lines.append(f'{stream_url}\n\n')
+            m3u_lines.append(f'#EXTVLCOPT:http-referrer={REFERER_URL}\n')
+            m3u_lines.append(f'#EXTVLCOPT:http-user-agent={USER_AGENT_STR}\n')
+            m3u_lines.append(f'{final_stream_url}\n\n')
             stream_count += 1
 
-    print(f"Đã xử lý {match_count} trận đấu (Giờ VN) -> Xuất {stream_count} luồng stream M3U thành công.")
+    print(f"Đã xử lý {match_count} trận đấu -> Xuất {stream_count} luồng stream M3U (đã gắn Header HD thành công).")
     return "".join(m3u_lines)
 
 def main():
@@ -145,7 +148,6 @@ def main():
         print("-> CẬP NHẬT FILE saoketv.m3u THÀNH CÔNG!")
     else:
         print("-> CẢNH BÁO: Chưa lấy được dữ liệu từ API. Bảo toàn file saoketv.m3u cũ.")
-        # Nếu chưa có file saoketv.m3u thì tạo file mặc định để không làm gãy bước Git Commit
         if not os.path.exists("saoketv.m3u"):
             with open("saoketv.m3u", "w", encoding="utf-8") as f:
                 f.write("#EXTM3U x-tvg-url=\"\"\n")
