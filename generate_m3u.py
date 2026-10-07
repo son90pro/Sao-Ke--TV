@@ -1,125 +1,149 @@
 from curl_cffi import requests
-from bs4 import BeautifulSoup
-import re
 import json
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 
-# API lấy domain hoạt động mới nhất của Sao Kê TV
+# API cấu hình gốc của Sao Kê TV
 CONFIG_API = "https://skapi.66887979.xyz/v2/web-list?url=saoketv"
+
+# Danh sách các API trận đấu phổ biến của hệ thống Sao Kê TV
+POSSIBLE_MATCH_APIS = [
+    "https://skapi.66887979.xyz/v2/match/list",
+    "https://skapi.66887979.xyz/v2/matches",
+    "https://skapi.66887979.xyz/v1/match/list",
+    "https://skapi.66887979.xyz/v2/live-list"
+]
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-    "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": "application/json, text/plain, */*",
+    "Origin": "https://vip3.saoketv40.xyz",
+    "Referer": "https://vip3.saoketv40.xyz/"
 }
 
-def get_current_domain():
+def get_domain_and_api():
+    current_domain = "https://vip3.saoketv40.xyz/"
     try:
         res = requests.get(CONFIG_API, headers=HEADERS, impersonate="chrome120", timeout=10)
         if res.status_code == 200:
             data = res.json()
-            domain = data.get("current", "https://vip3.saoketv40.xyz/")
-            return domain.rstrip('/') + '/'
+            current_domain = data.get("current", current_domain)
+            print(f"Domain hoạt động hiện tại: {current_domain}")
     except Exception as e:
-        print(f"Lỗi lấy domain cấu hình: {e}")
-    return "https://vip3.saoketv40.xyz/"
+        print(f"Không lấy được config domain, dùng mặc định: {e}")
+    return current_domain
 
-def fetch_html(url):
-    try:
-        # Dùng impersonate chrome120 để vượt qua Cloudflare 403 trên GitHub Actions
-        response = requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=15)
-        print(f"HTTP Status Code trang chủ: {response.status_code}")
-        if response.status_code == 200:
-            return response.text
-    except Exception as e:
-        print(f"Lỗi tải HTML trang chủ: {e}")
-    return ""
+def fetch_matches_data(domain):
+    HEADERS["Referer"] = domain
+    HEADERS["Origin"] = domain.rstrip('/')
 
-def parse_matches(html):
-    matches_list = []
-    
-    # Bóc tách mảng JSON trận đấu nhúng trong thẻ script __NEXT_DATA__
-    next_data_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', html)
-    if next_data_match:
+    # Cách 1: Thử các Endpoint API JSON trực tiếp
+    for api_url in POSSIBLE_MATCH_APIS:
         try:
-            data = json.loads(next_data_match.group(1))
-            page_props = data.get("props", {}).get("pageProps", {})
-            raw_matches = page_props.get("matches", page_props.get("matchList", []))
-            
-            for item in raw_matches:
-                matches_list.append({
-                    "time": item.get("match_time_str", item.get("time", datetime.now().strftime("%H:%M %d/%m"))),
-                    "home": item.get("home_name", item.get("home_team", "Đội nhà")),
-                    "away": item.get("away_name", item.get("away_team", "Đội khách")),
-                    "logo": item.get("home_logo", item.get("logo", "")),
-                    "blv": item.get("commentator", item.get("blv", "BLV")),
-                    "quality": item.get("quality", "hls"),
-                    "url": item.get("play_url", item.get("stream_url", ""))
-                })
-            if matches_list:
-                print(f"Trích xuất thành công {len(matches_list)} trận đấu từ JSON nhúng.")
-                return matches_list
-        except Exception as e:
-            print(f"Lỗi parse NEXT_DATA: {e}")
-
-    # Phương án dự phòng: Phân tích cú pháp DOM HTML bằng BeautifulSoup
-    soup = BeautifulSoup(html, "html.parser")
-    match_items = soup.select(".match-item, .item-match, div[class*='match']")
-    
-    for item in match_items:
-        try:
-            home = item.select_one(".home-name, .team-home, .team-a")
-            away = item.select_one(".away-name, .team-away, .team-b")
-            time_el = item.select_one(".match-time, .time")
-            blv_el = item.select_one(".blv-name, .commentator")
-            logo_el = item.select_one("img")
-            link_el = item.select_one("a[href*='xem']") or item
-
-            if home and away:
-                matches_list.append({
-                    "time": time_el.get_text(strip=True) if time_el else datetime.now().strftime("%H:%M %d/%m"),
-                    "home": home.get_text(strip=True),
-                    "away": away.get_text(strip=True),
-                    "logo": logo_el["src"] if logo_el and logo_el.has_attr("src") else "",
-                    "blv": blv_el.get_text(strip=True) if blv_el else "BLV",
-                    "quality": "hls",
-                    "url": link_el.get("href", "")
-                })
+            res = requests.get(api_url, headers=HEADERS, impersonate="chrome120", timeout=8)
+            if res.status_code == 200:
+                try:
+                    json_data = res.json()
+                    if json_data and (isinstance(json_data, list) or "data" in json_data or "matches" in json_data):
+                        print(f"Lấy thành công trận đấu từ API: {api_url}")
+                        return json_data
+                except Exception:
+                    pass
         except Exception:
             continue
-            
-    print(f"Trích xuất thành công {len(matches_list)} trận đấu từ DOM HTML.")
-    return matches_list
 
-def export_m3u(matches, domain):
-    m3u = "#EXTM3U x-tvg-url=\"\"\n\n"
-    for m in matches:
-        if not m["home"] or not m["away"]:
+    # Cách 2: Tải HTML trang chủ và quét tìm link API ẩn trong file JS
+    print("Đang quét tìm link API ẩn trong mã nguồn HTML...")
+    try:
+        html_res = requests.get(domain, headers=HEADERS, impersonate="chrome120", timeout=12)
+        if html_res.status_code == 200:
+            html = html_res.text
+            
+            # Tìm các đường dẫn API có dạng http... match hoặc list trong file JS
+            found_urls = re.findall(r'https?://[^\s"\'<>]+(?:match|list|live)[^\s"\'<>]*', html)
+            for url in set(found_urls):
+                try:
+                    res = requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=5)
+                    if res.status_code == 200:
+                        json_data = res.json()
+                        if json_data:
+                            print(f"Tìm thấy API trận đấu ẩn: {url}")
+                            return json_data
+                except Exception:
+                    continue
+    except Exception as e:
+        print(f"Lỗi khi quét HTML: {e}")
+
+    return None
+
+def extract_match_list(data):
+    if not data:
+        return []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        return data.get("data", data.get("matches", data.get("list", [])))
+    return []
+
+def format_m3u(raw_matches, domain):
+    m3u_content = "#EXTM3U x-tvg-url=\"\"\n\n"
+    count = 0
+    
+    now = datetime.now()
+    today_str = now.strftime("%d/%m")
+    tomorrow_str = (now + timedelta(days=1)).strftime("%d/%m")
+
+    for match in raw_matches:
+        if not isinstance(match, dict):
             continue
             
-        stream_url = m["url"]
+        team_a = match.get("home_name", match.get("home_team", match.get("home", "")))
+        team_b = match.get("away_name", match.get("away_team", match.get("away", "")))
+        
+        if not team_a or not team_b:
+            continue
+
+        logo = match.get("home_logo", match.get("logo", ""))
+        caster = match.get("commentator", match.get("blv", match.get("caster", "BLV")))
+        quality = match.get("quality", "hls")
+        stream_url = match.get("play_url", match.get("stream_url", match.get("url", "")))
+        
+        # Xử lý thời gian
+        time_str = match.get("match_time_str", match.get("time", ""))
+        timestamp = match.get("match_time", match.get("timestamp", 0))
+        
+        if timestamp and isinstance(timestamp, (int, float)) and timestamp > 0:
+            match_dt = datetime.fromtimestamp(timestamp)
+            time_str = match_dt.strftime("%H:%M %d/%m")
+        elif not time_str:
+            time_str = now.strftime("%H:%M %d/%m")
+
+        # Chuẩn hóa đường dẫn link phát
         if stream_url and not stream_url.startswith("http"):
             stream_url = domain.rstrip('/') + '/' + stream_url.lstrip('/')
+        if not stream_url:
+            stream_url = domain
 
-        # Hiển thị đúng định dạng: HH:MM DD/MM ⚽ TeamA vs TeamB (BLV) [hls]
-        title = f"{m['time']} ⚽ {m['home']} vs {m['away']} ({m['blv']}) [{m['quality']}]"
-        m3u += f'#EXTINF:-1 tvg-logo="{m["logo"]}" group-title="Sao Kê TV",{title}\n'
-        m3u += f'{stream_url if stream_url else domain}\n\n'
-    return m3u
+        # Định dạng chuẩn: HH:MM DD/MM ⚽ TeamA vs TeamB (BLV) [hls]
+        title = f"{time_str} ⚽ {team_a} vs {team_b} ({caster}) [{quality}]"
+
+        m3u_content += f'#EXTINF:-1 tvg-logo="{logo}" group-title="Sao Kê TV",{title}\n'
+        m3u_content += f'{stream_url}\n\n'
+        count += 1
+
+    print(f"Tổng số trận đấu xuất ra file M3U: {count}")
+    return m3u_content
 
 def main():
-    domain = get_current_domain()
-    print(f"Đang kết nối: {domain}")
-    html = fetch_html(domain)
+    domain = get_domain_and_api()
+    data = fetch_matches_data(domain)
+    matches = extract_match_list(data)
     
-    if html:
-        matches = parse_matches(html)
-        m3u_content = export_m3u(matches, domain)
-        with open("saoketv.m3u", "w", encoding="utf-8") as f:
-            f.write(m3u_content)
-        print("Đã cập nhật file saoketv.m3u thành công!")
-    else:
-        print("Không tải được dữ liệu HTML trang chủ.")
+    m3u_content = format_m3u(matches, domain)
+    
+    with open("saoketv.m3u", "w", encoding="utf-8") as f:
+        f.write(m3u_content)
+    print("Đã hoàn tất cập nhật saoketv.m3u!")
 
 if __name__ == "__main__":
     main()
