@@ -1,14 +1,13 @@
-import sys
+import os
 import re
 import json
-import urllib.parse
 from datetime import datetime, timedelta, timezone
 from curl_cffi import requests
 
-# Khai báo múi giờ Việt Nam (UTC+7)
+# Múi giờ Việt Nam (UTC+7)
 VN_TZ = timezone(timedelta(hours=7))
 
-# Danh sách ID trận đấu dự phòng
+# Danh sách ID trận đấu mặc định
 DEFAULT_MATCH_IDS = [
     "6ac5952bf54928d5ed64013e",
     "6ac4d7b72454ab5c04d29b0c",
@@ -16,71 +15,67 @@ DEFAULT_MATCH_IDS = [
     "6ac59574bf3ed6c99566dc1d"
 ]
 
+# Các tên miền API của hệ thống Sao Kê TV
+API_DOMAINS = [
+    "https://skapi.66887979.xyz",
+    "https://redirect-live.66887979.xyz"
+]
+
+# Danh sách dấu ấn trình duyệt để xoay vòng thử nghiệm
+IMPERSONATE_TARGETS = ["chrome124", "chrome120", "safari15_5", "edge101"]
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
     "Origin": "https://vip3.saoketv40.xyz",
-    "Referer": "https://vip3.saoketv40.xyz/"
+    "Referer": "https://vip3.saoketv40.xyz/",
+    "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
+    "Sec-Ch-Ua-Mobile": "?0",
+    "Sec-Ch-Ua-Platform": '"Windows"',
+    "Sec-Fetch-Dest": "empty",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Site": "cross-site"
 }
-
-def fetch_json_with_bypass(url):
-    """Gửi request vượt 403 bằng nhiều kênh proxy"""
-    # 1. Gọi trực tiếp bằng curl_cffi
-    try:
-        res = requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=8)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-
-    # 2. Thử lần lượt qua các Proxy ổn định
-    encoded_url = urllib.parse.quote(url)
-    proxies = [
-        f"https://api.codetabs.com/v1/proxy?quest={encoded_url}",
-        f"https://corsproxy.io/?{url}",
-        f"https://api.allorigins.win/raw?url={encoded_url}"
-    ]
-
-    for p in proxies:
-        try:
-            res = requests.get(p, headers=HEADERS, impersonate="chrome120", timeout=10)
-            if res.status_code == 200:
-                data = res.json()
-                if isinstance(data, dict) and (data.get("data") or data.get("error") == False):
-                    return data
-        except Exception:
-            continue
-
-    return None
 
 def get_match_ids_from_web():
     """Tải trang chủ lấy Mongo ID trận đấu mới nhất"""
     domain = "https://vip3.saoketv40.xyz/"
     ids = []
-    try:
-        res = requests.get(domain, headers=HEADERS, impersonate="chrome120", timeout=10)
-        if res.status_code == 200:
-            found_ids = re.findall(r'[a-f0-9]{24}', res.text)
-            ids = list(set(found_ids))
-    except Exception as e:
-        print(f"Lỗi quét trang chủ: {e}")
+    for target in IMPERSONATE_TARGETS:
+        try:
+            res = requests.get(domain, headers=HEADERS, impersonate=target, timeout=6)
+            if res.status_code == 200:
+                found_ids = re.findall(r'[a-f0-9]{24}', res.text)
+                ids = list(set(found_ids))
+                if ids:
+                    print(f"-> Quét thành công {len(ids)} ID trận đấu từ trang chủ ({target}).")
+                    break
+        except Exception:
+            continue
     return ids
 
 def fetch_live_data(match_ids):
-    """Lấy dữ liệu danh sách trận đấu"""
+    """Truy vấn API live-data xoay vòng qua các domain và target trình duyệt"""
     test_ids = match_ids + [i for i in DEFAULT_MATCH_IDS if i not in match_ids]
 
     for mid in test_ids:
-        api_url = f"https://skapi.66887979.xyz/v2/saoke/live-data/{mid}?link=1"
-        data = fetch_json_with_bypass(api_url)
-        if data and data.get("data", {}).get("lives"):
-            return data
-
+        for api_domain in API_DOMAINS:
+            api_url = f"{api_domain}/v2/saoke/live-data/{mid}?link=1"
+            for target in IMPERSONATE_TARGETS:
+                try:
+                    res = requests.get(api_url, headers=HEADERS, impersonate=target, timeout=5)
+                    if res.status_code == 200:
+                        data = res.json()
+                        if data and data.get("data", {}).get("lives"):
+                            print(f"-> THÀNH CÔNG! Lấy dữ liệu trận đấu từ {api_domain} ({target})")
+                            return data
+                except Exception:
+                    continue
     return None
 
 def build_m3u(json_data):
-    """Xuất danh sách m3u theo múi giờ Việt Nam (UTC+7)"""
+    """Xuất danh sách m3u theo chuẩn múi giờ Việt Nam (UTC+7)"""
     m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
     
     if not json_data or "data" not in json_data or "lives" not in json_data["data"]:
@@ -102,6 +97,7 @@ def build_m3u(json_data):
         else:
             match_dt = now_vn
 
+        # Lọc các trận đấu trong ngày hôm nay và ngày mai (giờ VN)
         if match_dt.date() not in [today, tomorrow]:
             continue
 
@@ -135,7 +131,7 @@ def build_m3u(json_data):
             m3u_lines.append(f'{stream_url}\n\n')
             stream_count += 1
 
-    print(f"Đã xử lý {match_count} trận đấu (Giờ VN) -> Xuất {stream_count} luồng stream M3U.")
+    print(f"Đã xử lý {match_count} trận đấu (Giờ VN) -> Xuất {stream_count} luồng stream M3U thành công.")
     return "".join(m3u_lines)
 
 def main():
@@ -148,14 +144,11 @@ def main():
             f.write(m3u_content)
         print("-> CẬP NHẬT FILE saoketv.m3u THÀNH CÔNG!")
     else:
-        print("-> LỖI: Không thể lấy dữ liệu từ hệ thống Sao Kê TV.")
-        # Khởi tạo file saoketv.m3u rỗng/giữ nguyên để không làm gãy lệnh 'git add' ở bước sau
-        try:
-            open("saoketv.m3u", "a", encoding="utf-8").close()
-        except Exception:
+        print("-> CẢNH BÁO: Chưa lấy được dữ liệu từ API. Bảo toàn file saoketv.m3u cũ.")
+        # Nếu chưa có file saoketv.m3u thì tạo file mặc định để không làm gãy bước Git Commit
+        if not os.path.exists("saoketv.m3u"):
             with open("saoketv.m3u", "w", encoding="utf-8") as f:
-                f.write("#EXTM3U\n")
-        sys.exit(1) # Báo lỗi rõ ràng ở bước Run Script
+                f.write("#EXTM3U x-tvg-url=\"\"\n")
 
 if __name__ == "__main__":
     main()
