@@ -1,8 +1,9 @@
-from curl_cffi import requests
-from datetime import datetime, timedelta, timezone
+import sys
 import re
 import json
 import urllib.parse
+from datetime import datetime, timedelta, timezone
+from curl_cffi import requests
 
 # Khai báo múi giờ Việt Nam (UTC+7)
 VN_TZ = timezone(timedelta(hours=7))
@@ -20,17 +21,12 @@ HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
     "Origin": "https://vip3.saoketv40.xyz",
-    "Referer": "https://vip3.saoketv40.xyz/",
-    "Sec-Ch-Ua": '"Not-A.Brand";v="99", "Chromium";v="124", "Google Chrome";v="124"',
-    "Sec-Ch-Ua-Mobile": "?0",
-    "Sec-Ch-Ua-Platform": '"Windows"',
-    "Sec-Fetch-Dest": "empty",
-    "Sec-Fetch-Mode": "cors",
-    "Sec-Fetch-Site": "cross-site"
+    "Referer": "https://vip3.saoketv40.xyz/"
 }
 
 def fetch_json_with_bypass(url):
-    """Gửi request tự động bypass 403 Cloudflare"""
+    """Gửi request vượt 403 bằng nhiều kênh proxy"""
+    # 1. Gọi trực tiếp bằng curl_cffi
     try:
         res = requests.get(url, headers=HEADERS, impersonate="chrome120", timeout=8)
         if res.status_code == 200:
@@ -38,24 +34,23 @@ def fetch_json_with_bypass(url):
     except Exception:
         pass
 
-    # Dự phòng 1: Chạy qua CorsProxy
-    proxy_url = f"https://corsproxy.io/?{url}"
-    try:
-        res = requests.get(proxy_url, headers=HEADERS, impersonate="chrome120", timeout=12)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-
-    # Dự phòng 2: Chạy qua AllOrigins Proxy
+    # 2. Thử lần lượt qua các Proxy ổn định
     encoded_url = urllib.parse.quote(url)
-    proxy_url2 = f"https://api.allorigins.win/raw?url={encoded_url}"
-    try:
-        res = requests.get(proxy_url2, headers=HEADERS, impersonate="chrome120", timeout=12)
-        if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
+    proxies = [
+        f"https://api.codetabs.com/v1/proxy?quest={encoded_url}",
+        f"https://corsproxy.io/?{url}",
+        f"https://api.allorigins.win/raw?url={encoded_url}"
+    ]
+
+    for p in proxies:
+        try:
+            res = requests.get(p, headers=HEADERS, impersonate="chrome120", timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                if isinstance(data, dict) and (data.get("data") or data.get("error") == False):
+                    return data
+        except Exception:
+            continue
 
     return None
 
@@ -85,16 +80,13 @@ def fetch_live_data(match_ids):
     return None
 
 def build_m3u(json_data):
-    """Xuất danh sách m3u theo đúng múi giờ Việt Nam (UTC+7)"""
+    """Xuất danh sách m3u theo múi giờ Việt Nam (UTC+7)"""
     m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
     
     if not json_data or "data" not in json_data or "lives" not in json_data["data"]:
-        print("Dữ liệu JSON không chứa danh sách trận đấu.")
         return "".join(m3u_lines)
 
     lives = json_data["data"]["lives"]
-    
-    # Lấy ngày hiện tại theo giờ Việt Nam
     now_vn = datetime.now(VN_TZ)
     today = now_vn.date()
     tomorrow = today + timedelta(days=1)
@@ -105,13 +97,11 @@ def build_m3u(json_data):
     for match in lives:
         time_ms = match.get("time", 0)
         
-        # Chuyển đổi Timestamp epoch sang múi giờ Việt Nam (UTC+7)
         if time_ms > 0:
             match_dt = datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc).astimezone(VN_TZ)
         else:
             match_dt = now_vn
 
-        # Chỉ lấy các trận diễn ra trong ngày hôm nay và ngày mai (theo giờ VN)
         if match_dt.date() not in [today, tomorrow]:
             continue
 
@@ -121,7 +111,6 @@ def build_m3u(json_data):
         logo_a = match.get("teamA", {}).get("picture", "")
         blv_name = match.get("blv", "BLV")
 
-        # Lấy danh sách các luồng phát HLS
         hls_list = match.get("hlsUrls", [])
         if not hls_list and "blvs" in match:
             for b in match.get("blvs", []):
@@ -140,14 +129,13 @@ def build_m3u(json_data):
             if not stream_url:
                 continue
 
-            # Định dạng: HH:MM DD/MM ⚽ TeamA vs TeamB (BLV) [Quality]
             title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name}) [{quality}]"
 
             m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV",{title}\n')
             m3u_lines.append(f'{stream_url}\n\n')
             stream_count += 1
 
-    print(f"Đã xử lý {match_count} trận đấu (Múi giờ VN) -> Xuất {stream_count} luồng stream M3U thành công.")
+    print(f"Đã xử lý {match_count} trận đấu (Giờ VN) -> Xuất {stream_count} luồng stream M3U.")
     return "".join(m3u_lines)
 
 def main():
@@ -161,6 +149,13 @@ def main():
         print("-> CẬP NHẬT FILE saoketv.m3u THÀNH CÔNG!")
     else:
         print("-> LỖI: Không thể lấy dữ liệu từ hệ thống Sao Kê TV.")
+        # Khởi tạo file saoketv.m3u rỗng/giữ nguyên để không làm gãy lệnh 'git add' ở bước sau
+        try:
+            open("saoketv.m3u", "a", encoding="utf-8").close()
+        except Exception:
+            with open("saoketv.m3u", "w", encoding="utf-8") as f:
+                f.write("#EXTM3U\n")
+        sys.exit(1) # Báo lỗi rõ ràng ở bước Run Script
 
 if __name__ == "__main__":
     main()
