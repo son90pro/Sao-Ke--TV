@@ -2,15 +2,15 @@ name: Auto Update SaoKeTV M3U
 
 on:
   schedule:
-    # Chạy tự động mỗi 30 phút
+    # Tự động chạy mỗi 30 phút một lần (múi giờ UTC)
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Cho phép bấm chạy thủ công trên GitHub
+  workflow_dispatch: # Nút bấm kích hoạt chạy thủ công trên giao diện GitHub
 
 jobs:
   update-playlist:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Cấp quyền cho GitHub Actions commit & push file .m3u
+      contents: write # Cấp quyền ghi để GitHub Actions push file saoketv.m3u lên kho
 
     steps:
       - name: Checkout Repository
@@ -24,7 +24,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install curl_cffi beautifulsoup4 requests
+          pip install curl_cffi
 
       - name: Run Script
         run: python generate_m3u.py
