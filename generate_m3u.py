@@ -10,68 +10,51 @@ BASE_DOMAIN = "https://live.tamilians.in"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
     "Origin": BASE_DOMAIN,
     "Referer": f"{BASE_DOMAIN}/"
 }
 
-def get_matches_from_api():
-    """Thử gọi các endpoint danh sách trận đấu khác nhau của hệ thống"""
-    endpoints = [
-        f"{BASE_DOMAIN}/api/matches",
-        f"{BASE_DOMAIN}/api/match/list",
-        f"{BASE_DOMAIN}/api/matches/list",
-        f"{BASE_DOMAIN}/api/home",
-        f"{BASE_DOMAIN}/api/lives"
-    ]
-    
-    for api in endpoints:
-        try:
-            print(f"Đang thử gọi API danh sách: {api}")
-            res = requests.get(api, headers=HEADERS, impersonate="chrome120", timeout=8)
-            if res.status_code == 200:
-                data = res.json()
-                # Trích xuất mảng trận đấu tùy theo cấu trúc JSON trả về
-                matches = []
-                if isinstance(data, list):
-                    matches = data
-                elif isinstance(data, dict):
-                    matches = data.get("data", data.get("matches", data.get("list", [])))
-                    if isinstance(matches, dict):
-                        matches = matches.get("lives", matches.get("list", []))
-                
-                if matches and isinstance(matches, list):
-                    print(f"-> Lấy thành công {len(matches)} trận từ API: {api}")
-                    return matches
-        except Exception as e:
-            print(f"-> Lỗi khi gọi {api}: {e}")
-            
-    return []
-
-def get_match_ids_from_web():
-    """Quét mã ID trận đấu từ trang chủ nếu API list thay đổi cấu trúc"""
-    match_ids = set()
+def get_matches_from_next_data():
+    """Trích xuất danh sách trận đấu trực tiếp từ JSON nhúng __NEXT_DATA__ của trang chủ"""
+    match_items = []
     try:
-        print(f"Đang quét trang chủ {BASE_DOMAIN} để tìm ID trận đấu...")
-        res = requests.get(BASE_DOMAIN, headers=HEADERS, impersonate="chrome120", timeout=10)
+        print(f"Đang tải trang chủ {BASE_DOMAIN} để bóc tách dữ liệu...")
+        res = requests.get(BASE_DOMAIN, headers=HEADERS, impersonate="chrome120", timeout=12)
         if res.status_code == 200:
-            # Quét các đường dẫn dạng /matches/{id} hoặc ID 12-16 ký tự
-            found_links = re.findall(r'/matches/([a-z0-9]+)', res.text)
-            for lid in found_links:
-                match_ids.add(lid)
-            
-            found_ids = re.findall(r'"id"\s*:\s*"([a-z0-9]{12,18})"', res.text)
-            for fid in found_ids:
-                match_ids.add(fid)
+            # Tìm thẻ chứa __NEXT_DATA__
+            next_data_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', res.text)
+            if next_data_match:
+                json_raw = json.loads(next_data_match.group(1))
+                # Điều hướng sâu vào cấu trúc props của Next.js để tìm danh sách trận
+                page_props = json_raw.get("props", {}).get("pageProps", {})
+                
+                # Quét tất cả các key có thể chứa danh sách trận đấu
+                for key in ["matches", "matchList", "list", "data", "lives", "initialState"]:
+                    val = page_props.get(key)
+                    if isinstance(val, list) and len(val) > 0:
+                        match_items.extend(val)
+                    elif isinstance(val, dict):
+                        for sub_k, sub_v in val.items():
+                            if isinstance(sub_v, list) and len(sub_v) > 0:
+                                match_items.extend(sub_v)
+                                
+                print(f"-> Tìm thấy {len(match_items)} trận từ __NEXT_DATA__.")
+                
+            # Nếu không tìm thấy qua Next data, quét toàn bộ các ID dạng chuỗi 15-18 ký tự
+            if not match_items:
+                found_ids = set(re.findall(r'"id"\s*:\s*"([a-z0-9]{12,18})"', res.text))
+                print(f"-> Quét được {len(found_ids)} ID tiềm năng từ HTML.")
+                for mid in found_ids:
+                    detail = fetch_match_detail(mid)
+                    if detail and detail.get("success"):
+                        match_items.append(detail.get("data", {}))
+                        
     except Exception as e:
-        print(f"Lỗi quét trang chủ: {e}")
+        print(f"Lỗi khi lấy dữ liệu trang chủ: {e}")
         
-    # ID mẫu dự phòng nếu quét trắng
-    if not match_ids:
-        match_ids.add("1l4rjnh9nowpm7v")
-        
-    return list(match_ids)
+    return match_items
 
 def fetch_match_detail(match_id):
     """Gọi API chi tiết từng trận đấu"""
@@ -82,8 +65,10 @@ def fetch_match_detail(match_id):
         "&returnList=asia&returnList=asiaHt&returnList=bs&returnList=bsHt"
         "&isIncludedRelation=true"
     )
+    headers_api = HEADERS.copy()
+    headers_api["Accept"] = "application/json, text/plain, */*"
     try:
-        res = requests.get(detail_api, headers=HEADERS, impersonate="chrome120", timeout=6)
+        res = requests.get(detail_api, headers=headers_api, impersonate="chrome120", timeout=6)
         if res.status_code == 200:
             return res.json()
     except Exception:
@@ -100,31 +85,19 @@ def build_m3u():
     match_count = 0
     stream_count = 0
 
-    # Bước 1: Thử lấy danh sách trận trực tiếp từ API list
-    raw_matches = get_matches_from_api()
-    
+    raw_items = get_matches_from_next_data()
     match_items_to_process = []
-    
-    if raw_matches:
-        for item in raw_matches:
+
+    for item in raw_items:
+        # Nếu item đã có cấu trúc info & livestreams
+        if isinstance(item, dict) and "info" in item and "livestreams" in item:
+            match_items_to_process.append(item)
+        else:
             m_id = item.get("id") or item.get("matchId")
             if m_id:
-                # Nếu API list đã có sẵn thông tin chi tiết, dùng luôn; nếu không gọi chi tiết
-                if "info" in item and "livestreams" in item:
-                    match_items_to_process.append(item)
-                else:
-                    detail = fetch_match_detail(m_id)
-                    if detail and detail.get("success"):
-                        match_items_to_process.append(detail.get("data", {}))
-    else:
-        # Bước 2: Nếu API list không trả về, quét qua danh sách ID trên trang chủ
-        print("API list trống, chuyển sang quét chi tiết qua danh sách ID trang chủ...")
-        match_ids = get_match_ids_from_web()
-        print(f"Tìm thấy {len(match_ids)} ID trận đấu từ trang chủ.")
-        for mid in match_ids:
-            detail = fetch_match_detail(mid)
-            if detail and detail.get("success"):
-                match_items_to_process.append(detail.get("data", {}))
+                detail = fetch_match_detail(m_id)
+                if detail and detail.get("success"):
+                    match_items_to_process.append(detail.get("data", {}))
 
     print(f"Tổng số trận đấu chuẩn bị xử lý: {len(match_items_to_process)}")
 
