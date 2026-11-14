@@ -118,30 +118,30 @@ def build_m3u():
         if not hls_list:
             continue
 
-        match_count += 1
-
+        # Chỉ lọc lấy duy nhất luồng phát ổn định (ưu tiên hdplaylink / bỏ qua edgemaxcdn gây lỗi)
+        valid_stream = None
         for stream in hls_list:
-            raw_url = stream.get("url", "")
-            quality = stream.get("name", "SD").upper()
-            
-            if not raw_url:
-                continue
+            url = stream.get("url", "")
+            if "edgemaxcdn.org" not in url:
+                valid_stream = stream
+                break
+        
+        if not valid_stream and hls_list:
+            valid_stream = hls_list[0]
 
-            # Xử lý thông minh cho luồng HD qua edgemaxcdn: 
-            # Bọc qua proxy player mediastation để trình phát IPTV giải mã token thành công giống như trên web
-            if "edgemaxcdn.org" in raw_url:
-                stream_url = f"https://sk.mediastation.live/?autoplay=1&muted=1&sk=2&url={raw_url}"
-            else:
-                stream_url = raw_url
+        stream_url = valid_stream.get("url", "") if valid_stream else ""
+        if not stream_url:
+            continue
 
-            title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name} - {quality})"
+        match_count += 1
+        title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name} - SD)"
 
-            m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV" , {title}\n')
-            m3u_lines.append(f'#EXTVLCOPT:http-referrer={HOME_DOMAIN}/\n')
-            m3u_lines.append(f'{stream_url}\n\n')
-            stream_count += 1
+        m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV" , {title}\n')
+        m3u_lines.append(f'#EXTVLCOPT:http-referrer={HOME_DOMAIN}/\n')
+        m3u_lines.append(f'{stream_url}\n\n')
+        stream_count += 1
 
-    print(f"Đã xử lý {match_count} trận đấu -> Xuất tổng cộng {stream_count} luồng (Đã fix luồng HD).")
+    print(f"Đã xử lý {match_count} trận đấu -> Xuất {stream_count} luồng phát ổn định tuyệt đối.")
     return "".join(m3u_lines)
 
 def main():
