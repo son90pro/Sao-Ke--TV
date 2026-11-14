@@ -16,53 +16,65 @@ HEADERS = {
     "Referer": f"{BASE_DOMAIN}/"
 }
 
-def get_match_ids():
-    """Quét và thu thập danh sách ID trận đấu từ trang chủ hoặc API list"""
-    match_ids = set()
-    
-    # 1. Thử gọi API danh sách trận đấu nếu có sẵn endpoint
-    list_apis = [
+def get_matches_from_api():
+    """Thử gọi các endpoint danh sách trận đấu khác nhau của hệ thống"""
+    endpoints = [
         f"{BASE_DOMAIN}/api/matches",
         f"{BASE_DOMAIN}/api/match/list",
-        f"{BASE_DOMAIN}/api/home"
+        f"{BASE_DOMAIN}/api/matches/list",
+        f"{BASE_DOMAIN}/api/home",
+        f"{BASE_DOMAIN}/api/lives"
     ]
-    for api in list_apis:
+    
+    for api in endpoints:
         try:
+            print(f"Đang thử gọi API danh sách: {api}")
             res = requests.get(api, headers=HEADERS, impersonate="chrome120", timeout=8)
             if res.status_code == 200:
                 data = res.json()
-                items = data.get("data", []) if isinstance(data, dict) else data
-                for item in items:
-                    m_id = item.get("id") or item.get("matchId")
-                    if m_id:
-                        match_ids.add(m_id)
-        except Exception:
-            continue
+                # Trích xuất mảng trận đấu tùy theo cấu trúc JSON trả về
+                matches = []
+                if isinstance(data, list):
+                    matches = data
+                elif isinstance(data, dict):
+                    matches = data.get("data", data.get("matches", data.get("list", [])))
+                    if isinstance(matches, dict):
+                        matches = matches.get("lives", matches.get("list", []))
+                
+                if matches and isinstance(matches, list):
+                    print(f"-> Lấy thành công {len(matches)} trận từ API: {api}")
+                    return matches
+        except Exception as e:
+            print(f"-> Lỗi khi gọi {api}: {e}")
+            
+    return []
 
-    # 2. Quét mã định danh ID trận đấu trực tiếp từ mã nguồn HTML trang chủ
+def get_match_ids_from_web():
+    """Quét mã ID trận đấu từ trang chủ nếu API list thay đổi cấu trúc"""
+    match_ids = set()
     try:
+        print(f"Đang quét trang chủ {BASE_DOMAIN} để tìm ID trận đấu...")
         res = requests.get(BASE_DOMAIN, headers=HEADERS, impersonate="chrome120", timeout=10)
         if res.status_code == 200:
-            # Quét các đường dẫn chứa /matches/ hoặc chuỗi ID trong HTML
+            # Quét các đường dẫn dạng /matches/{id} hoặc ID 12-16 ký tự
             found_links = re.findall(r'/matches/([a-z0-9]+)', res.text)
             for lid in found_links:
                 match_ids.add(lid)
             
-            # Quét các trường id dạng chuỗi trong JSON embedded
             found_ids = re.findall(r'"id"\s*:\s*"([a-z0-9]{12,18})"', res.text)
             for fid in found_ids:
                 match_ids.add(fid)
     except Exception as e:
         print(f"Lỗi quét trang chủ: {e}")
-
-    # Đảm bảo luôn có ít nhất mẫu ID test từ người dùng nếu quét chưa kịp cập nhật
+        
+    # ID mẫu dự phòng nếu quét trắng
     if not match_ids:
         match_ids.add("1l4rjnh9nowpm7v")
-
+        
     return list(match_ids)
 
 def fetch_match_detail(match_id):
-    """Gọi API chi tiết từng trận đấu theo cấu trúc API mới"""
+    """Gọi API chi tiết từng trận đấu"""
     detail_api = (
         f"{BASE_DOMAIN}/api/matches/{match_id}/?"
         "lang=vi&companyIds=2"
@@ -80,9 +92,7 @@ def fetch_match_detail(match_id):
 
 def build_m3u():
     m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
-    match_ids = get_match_ids()
-    print(f"Tìm thấy {len(match_ids)} trận đấu tiềm năng từ domain mới.")
-
+    
     now_vn = datetime.now(VN_TZ)
     today = now_vn.date()
     tomorrow = today + timedelta(days=1)
@@ -90,17 +100,40 @@ def build_m3u():
     match_count = 0
     stream_count = 0
 
-    for mid in match_ids:
-        data_json = fetch_match_detail(mid)
-        if not data_json or not data_json.get("success"):
-            continue
+    # Bước 1: Thử lấy danh sách trận trực tiếp từ API list
+    raw_matches = get_matches_from_api()
+    
+    match_items_to_process = []
+    
+    if raw_matches:
+        for item in raw_matches:
+            m_id = item.get("id") or item.get("matchId")
+            if m_id:
+                # Nếu API list đã có sẵn thông tin chi tiết, dùng luôn; nếu không gọi chi tiết
+                if "info" in item and "livestreams" in item:
+                    match_items_to_process.append(item)
+                else:
+                    detail = fetch_match_detail(m_id)
+                    if detail and detail.get("success"):
+                        match_items_to_process.append(detail.get("data", {}))
+    else:
+        # Bước 2: Nếu API list không trả về, quét qua danh sách ID trên trang chủ
+        print("API list trống, chuyển sang quét chi tiết qua danh sách ID trang chủ...")
+        match_ids = get_match_ids_from_web()
+        print(f"Tìm thấy {len(match_ids)} ID trận đấu từ trang chủ.")
+        for mid in match_ids:
+            detail = fetch_match_detail(mid)
+            if detail and detail.get("success"):
+                match_items_to_process.append(detail.get("data", {}))
 
-        data = data_json.get("data", {})
+    print(f"Tổng số trận đấu chuẩn bị xử lý: {len(match_items_to_process)}")
+
+    for data in match_items_to_process:
         info = data.get("info", {})
         relation = data.get("relation", {})
         livestreams = data.get("livestreams", {})
 
-        match_time_str = info.get("matchTime") # Chuỗi ISO: e.g., "2026-11-14T14:00:00+00:00"
+        match_time_str = info.get("matchTime")
         if not match_time_str:
             continue
 
@@ -110,13 +143,13 @@ def build_m3u():
         except Exception:
             continue
 
-        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo múi giờ Việt Nam (UTC+7)
+        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo giờ Việt Nam (UTC+7)
         if match_dt_vn.date() not in [today, tomorrow]:
             continue
 
         time_str = match_dt_vn.strftime("%H:%M %d/%m")
 
-        # Ánh xạ tên đội và logo từ phần relation
+        # Ánh xạ thông tin đội bóng và logo
         teams = relation.get("teams", [])
         team_map = {t["id"]: t for t in teams}
         
@@ -142,7 +175,6 @@ def build_m3u():
             quality = "HD" if idx == 0 else f"SD{idx}"
             title = f"{time_str} ⚽ {team_a_name} vs {team_b_name} ({commentator}) [{quality}]"
 
-            # Gắn kèm thông tin Header đính kèm để phát mượt mà trên TiviMate/OTT Navigator
             final_url = f"{stream_url}|Referer={BASE_DOMAIN}/&User-Agent={HEADERS['User-Agent']}"
 
             m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo}" group-title="Sao Kê TV",{title}\n')
@@ -162,3 +194,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
