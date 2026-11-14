@@ -2,15 +2,14 @@ name: Auto Update SaoKeTV M3U
 
 on:
   schedule:
-    # Tự động chạy mỗi 30 phút một lần (múi giờ UTC)
     - cron: '*/30 * * * *'
-  workflow_dispatch: # Nút bấm kích hoạt chạy thủ công trên giao diện GitHub
+  workflow_dispatch:
 
 jobs:
   update-playlist:
     runs-on: ubuntu-latest
     permissions:
-      contents: write # Cấp quyền ghi để GitHub Actions push file saoketv.m3u lên kho
+      contents: write
 
     steps:
       - name: Checkout Repository
