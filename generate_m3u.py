@@ -1,13 +1,11 @@
 import os
 import re
-import json
 from datetime import datetime, timedelta, timezone
 from curl_cffi import requests
 
 # Khai báo múi giờ Việt Nam (UTC+7)
 VN_TZ = timezone(timedelta(hours=7))
 
-# Các domain API và trang chủ
 HOME_DOMAIN = "https://vip5.saoketv40.xyz"
 API_DOMAINS = [
     "https://skapi.66887979.xyz",
@@ -45,7 +43,6 @@ def get_match_ids_from_web():
         html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         res = requests.get(HOME_DOMAIN, headers=html_headers, impersonate="chrome120", timeout=10)
         if res.status_code == 200:
-            # Quét các chuỗi ID hex 24 ký tự đặc trưng của MongoDB
             found_ids = re.findall(r'[a-f0-9]{24}', res.text)
             for fid in found_ids:
                 match_ids.add(fid)
@@ -77,7 +74,6 @@ def fetch_live_data(match_ids):
         if success:
             continue
             
-    # Loại bỏ trùng lặp dựa trên _id của trận đấu
     unique_lives = {}
     for match in all_lives:
         m_id = match.get("_id")
@@ -105,4 +101,53 @@ def build_m3u():
     for match in matches:
         time_ms = match.get("time", 0)
         if time_ms > 0:
-            
+            match_dt_vn = datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc).astimezone(VN_TZ)
+        else:
+            match_dt_vn = now_vn
+
+        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo giờ Việt Nam (UTC+7)
+        if match_dt_vn.date() not in [today, tomorrow]:
+            continue
+
+        time_str = match_dt_vn.strftime("%H:%M %d/%m")
+        team_a = match.get("teamA", {}).get("name", "Đội A")
+        team_b = match.get("teamB", {}).get("name", "Đội B")
+        logo_a = match.get("teamA", {}).get("picture", "")
+        blv_name = match.get("blv", "BLV")
+
+        hls_list = match.get("hlsUrls", [])
+        if not hls_list and "blvs" in match:
+            for b in match.get("blvs", []):
+                if b.get("hlsUrls"):
+                    hls_list.extend(b["hlsUrls"])
+
+        if not hls_list:
+            continue
+
+        match_count += 1
+
+        for stream in hls_list:
+            stream_url = stream.get("url", "")
+            if not stream_url:
+                continue
+
+            # Chuẩn hóa tiêu đề M3U khớp tuyệt đối với mẫu đang chạy ổn định của anh
+            title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name}) [hls]"
+
+            m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV" , {title}\n')
+            m3u_lines.append(f'#EXTVLCOPT:http-referrer={HOME_DOMAIN}/\n')
+            m3u_lines.append(f'{stream_url}\n\n')
+            stream_count += 1
+
+    print(f"Đã xử lý {match_count} trận đấu -> Xuất {stream_count} luồng M3U thành công.")
+    return "".join(m3u_lines)
+
+def main():
+    m3u_content = build_m3u()
+    with open("saoketv.m3u", "w", encoding="utf-8") as f:
+        f.write(m3u_content)
+    print("-> CẬP NHẬT FILE saoketv.m3u THÀNH CÔNG!")
+
+if __name__ == "__main__":
+    main()
+    
