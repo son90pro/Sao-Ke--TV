@@ -1,6 +1,4 @@
 import os
-import re
-import json
 from datetime import datetime, timedelta, timezone
 from curl_cffi import requests
 
@@ -10,70 +8,41 @@ BASE_DOMAIN = "https://live.tamilians.in"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept": "application/json, text/plain, */*",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
     "Origin": BASE_DOMAIN,
     "Referer": f"{BASE_DOMAIN}/"
 }
 
-def get_matches_from_next_data():
-    """Trích xuất danh sách trận đấu trực tiếp từ JSON nhúng __NEXT_DATA__ của trang chủ"""
-    match_items = []
-    try:
-        print(f"Đang tải trang chủ {BASE_DOMAIN} để bóc tách dữ liệu...")
-        res = requests.get(BASE_DOMAIN, headers=HEADERS, impersonate="chrome120", timeout=12)
-        if res.status_code == 200:
-            # Tìm thẻ chứa __NEXT_DATA__
-            next_data_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', res.text)
-            if next_data_match:
-                json_raw = json.loads(next_data_match.group(1))
-                # Điều hướng sâu vào cấu trúc props của Next.js để tìm danh sách trận
-                page_props = json_raw.get("props", {}).get("pageProps", {})
-                
-                # Quét tất cả các key có thể chứa danh sách trận đấu
-                for key in ["matches", "matchList", "list", "data", "lives", "initialState"]:
-                    val = page_props.get(key)
-                    if isinstance(val, list) and len(val) > 0:
-                        match_items.extend(val)
-                    elif isinstance(val, dict):
-                        for sub_k, sub_v in val.items():
-                            if isinstance(sub_v, list) and len(sub_v) > 0:
-                                match_items.extend(sub_v)
-                                
-                print(f"-> Tìm thấy {len(match_items)} trận từ __NEXT_DATA__.")
-                
-            # Nếu không tìm thấy qua Next data, quét toàn bộ các ID dạng chuỗi 15-18 ký tự
-            if not match_items:
-                found_ids = set(re.findall(r'"id"\s*:\s*"([a-z0-9]{12,18})"', res.text))
-                print(f"-> Quét được {len(found_ids)} ID tiềm năng từ HTML.")
-                for mid in found_ids:
-                    detail = fetch_match_detail(mid)
-                    if detail and detail.get("success"):
-                        match_items.append(detail.get("data", {}))
-                        
-    except Exception as e:
-        print(f"Lỗi khi lấy dữ liệu trang chủ: {e}")
-        
-    return match_items
+def fetch_matches_from_api():
+    """Gọi trực tiếp API danh sách trận đấu với dải thời gian linh hoạt"""
+    now_vn = datetime.now(VN_TZ)
+    from_date = (now_vn - timedelta(days=1)).strftime("%Y-%m-%dT00%3A00%3A00%2B07%3A00")
+    to_date = (now_vn + timedelta(days=2)).strftime("%Y-%m-%dT23%3A59%3A59%2B07%3A00")
 
-def fetch_match_detail(match_id):
-    """Gọi API chi tiết từng trận đấu"""
-    detail_api = (
-        f"{BASE_DOMAIN}/api/matches/{match_id}/?"
-        "lang=vi&companyIds=2"
-        "&returnList=info&returnList=livestreams&returnList=stats"
-        "&returnList=asia&returnList=asiaHt&returnList=bs&returnList=bsHt"
-        "&isIncludedRelation=true"
+    api_url = (
+        f"{BASE_DOMAIN}/api/matches/?lang=vi"
+        "&returnList=info&returnList=livestreams"
+        "&isIncludedRelation=true&sortMatchTime=asc"
+        f"&fromDate={from_date}&toDate={to_date}"
+        "&statuses=LIVE&statuses=UPCOMING"
+        "&livestreamsStatuses=LIVE&livestreamsStatuses=UPCOMING"
+        "&page=1&limit=100"
     )
-    headers_api = HEADERS.copy()
-    headers_api["Accept"] = "application/json, text/plain, */*"
+    
     try:
-        res = requests.get(detail_api, headers=headers_api, impersonate="chrome120", timeout=6)
+        print(f"Đang gọi API danh sách trận đấu: {api_url}")
+        res = requests.get(api_url, headers=HEADERS, impersonate="chrome120", timeout=12)
         if res.status_code == 200:
-            return res.json()
-    except Exception:
-        pass
-    return None
+            data = res.json()
+            if data.get("success"):
+                matches = data.get("data", {}).get("matches", [])
+                print(f"-> Lấy thành công {len(matches)} trận đấu từ API.")
+                return matches
+    except Exception as e:
+        print(f"Lỗi gọi API matches: {e}")
+        
+    return []
 
 def build_m3u():
     m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
@@ -85,53 +54,36 @@ def build_m3u():
     match_count = 0
     stream_count = 0
 
-    raw_items = get_matches_from_next_data()
-    match_items_to_process = []
+    matches = fetch_match_from_api_wrapper = fetch_matches_from_api()
 
-    for item in raw_items:
-        # Nếu item đã có cấu trúc info & livestreams
-        if isinstance(item, dict) and "info" in item and "livestreams" in item:
-            match_items_to_process.append(item)
-        else:
-            m_id = item.get("id") or item.get("matchId")
-            if m_id:
-                detail = fetch_match_detail(m_id)
-                if detail and detail.get("success"):
-                    match_items_to_process.append(detail.get("data", {}))
-
-    print(f"Tổng số trận đấu chuẩn bị xử lý: {len(match_items_to_process)}")
-
-    for data in match_items_to_process:
-        info = data.get("info", {})
-        relation = data.get("relation", {})
-        livestreams = data.get("livestreams", {})
-
+    for item in matches:
+        info = item.get("info", {})
+        livestreams = item.get("livestreams", {})
+        
         match_time_str = info.get("matchTime")
         if not match_time_str:
             continue
 
         try:
-            match_dt_utc = datetime.fromisoformat(match_time_str.replace("Z", "+00:00"))
-            match_dt_vn = match_dt_utc.astimezone(VN_TZ)
+            # Parse thời gian chuẩn từ API (e.g. 2026-11-15T21:00:00+07:00)
+            match_dt_vn = datetime.fromisoformat(match_time_str)
         except Exception:
-            continue
+            try:
+                match_dt_utc = datetime.fromisoformat(match_time_str.replace("Z", "+00:00"))
+                match_dt_vn = match_dt_utc.astimezone(VN_TZ)
+            except Exception:
+                continue
 
-        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo giờ Việt Nam (UTC+7)
+        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo múi giờ Việt Nam (UTC+7)
         if match_dt_vn.date() not in [today, tomorrow]:
             continue
 
         time_str = match_dt_vn.strftime("%H:%M %d/%m")
 
-        # Ánh xạ thông tin đội bóng và logo
-        teams = relation.get("teams", [])
-        team_map = {t["id"]: t for t in teams}
-        
-        home_team = team_map.get(info.get("homeTeamId"), {})
-        away_team = team_map.get(info.get("awayTeamId"), {})
-        
-        team_a_name = home_team.get("name", "Đội nhà")
-        team_b_name = away_team.get("name", "Đội khách")
-        logo = home_team.get("logo", "")
+        # Lấy tên đội bóng từ info hoặc giả lập nếu thiếu
+        team_a_name = info.get("homeTeamName", "Đội nhà")
+        team_b_name = info.get("awayTeamName", "Đội khách")
+        logo = info.get("homeTeamLogo", "")
 
         links = livestreams.get("links", [])
         if not links:
