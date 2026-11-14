@@ -11,8 +11,12 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
+    "X-Requested-With": "XMLHttpRequest", # Header mấu chốt để vượt lỗi browser_navigation_forbidden
     "Origin": BASE_DOMAIN,
-    "Referer": f"{BASE_DOMAIN}/"
+    "Referer": f"{BASE_DOMAIN}/",
+    "Sec-Fetch-Site": "same-origin",
+    "Sec-Fetch-Mode": "cors",
+    "Sec-Fetch-Dest": "empty"
 }
 
 def fetch_matches_from_api():
@@ -42,9 +46,6 @@ def fetch_matches_from_api():
         
         if res.status_code == 200:
             data = res.json()
-            # In ra một phần dữ liệu để kiểm tra log trên GitHub
-            print(f"Phản hồi JSON success: {data.get('success')}")
-            
             matches = data.get("data", {}).get("matches", [])
             print(f"-> Lấy thành công {len(matches)} trận đấu từ API.")
             return matches, data
@@ -56,7 +57,7 @@ def fetch_matches_from_api():
     return [], {}
 
 def build_m3u():
-    m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
+    m3u_lines = ["#EXTM3U\n\n"]
     
     now_vn = datetime.now(VN_TZ)
     today = now_vn.date()
@@ -67,7 +68,6 @@ def build_m3u():
 
     matches, raw_json = fetch_matches_from_api()
     
-    # Lấy danh sách team từ relation nếu có trong response tổng
     relation = raw_json.get("data", {}).get("relation", {})
     teams_list = relation.get("teams", [])
     team_map = {t["id"]: t for t in teams_list}
@@ -95,7 +95,6 @@ def build_m3u():
 
         time_str = match_dt_vn.strftime("%H:%M %d/%m")
 
-        # Lấy thông tin tên đội và logo từ team_map hoặc info
         home_id = info.get("homeTeamId")
         away_id = info.get("awayTeamId")
         
@@ -118,15 +117,12 @@ def build_m3u():
             if not stream_url:
                 continue
 
-            quality = "HD" if idx == 0 else f"SD{idx}"
-            title = f"{time_str} ⚽ {team_a_name} vs {team_b_name} ({commentator}) [{quality}]"
+            # Đồng bộ định dạng chuẩn mẫu user đang chạy
+            title = f"{time_str} ⚽ {team_a_name} vs {team_b_name} ({commentator}) [hls]"
 
-            final_url = f"{stream_url}|Referer={BASE_DOMAIN}/&User-Agent={HEADERS['User-Agent']}"
-
-            m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo}" group-title="Sao Kê TV",{title}\n')
+            m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo}" group-title="Sao Kê TV" , {title}\n')
             m3u_lines.append(f'#EXTVLCOPT:http-referrer={BASE_DOMAIN}/\n')
-            m3u_lines.append(f'#EXTVLCOPT:http-user-agent={HEADERS["User-Agent"]}\n')
-            m3u_lines.append(f'{final_url}\n\n')
+            m3u_lines.append(f'{stream_url}\n\n')
             stream_count += 1
 
     print(f"Đã xử lý {match_count} trận đấu -> Xuất {stream_count} luồng M3U thành công.")
