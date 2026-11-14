@@ -12,6 +12,7 @@ API_DOMAINS = [
     "https://redirect-live.66887979.xyz"
 ]
 
+# Danh sách ID trận đấu mới nhất được đồng bộ trực tiếp từ hệ thống
 DEFAULT_MATCH_IDS = [
     "6af5749a557c041f8f59a283",
     "6af5749a557c041f8f59a291",
@@ -82,28 +83,23 @@ def fetch_live_data(match_ids):
 def build_m3u():
     m3u_lines = ["#EXTM3U\n\n"]
     
-    now_vn = datetime.now(VN_TZ)
-    today = now_vn.date()
-    tomorrow = today + timedelta(days=1)
-
     match_count = 0
     stream_count = 0
 
     match_ids = get_match_ids_from_web()
+    print(f"Tổng số ID quét được: {len(match_ids)}")
+    
     matches = fetch_live_data(match_ids)
+    print(f"Tổng số trận lấy từ API: {len(matches)}")
 
     for match in matches:
         time_ms = match.get("time", 0)
         if time_ms > 0:
             match_dt_vn = datetime.fromtimestamp(time_ms / 1000, tz=timezone.utc).astimezone(VN_TZ)
+            time_str = match_dt_vn.strftime("%H:%M %d/%m")
         else:
-            match_dt_vn = now_vn
+            time_str = "Hôm nay"
 
-        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo giờ Việt Nam (UTC+7)
-        if match_dt_vn.date() not in [today, tomorrow]:
-            continue
-
-        time_str = match_dt_vn.strftime("%H:%M %d/%m")
         team_a = match.get("teamA", {}).get("name", "Đội A")
         team_b = match.get("teamB", {}).get("name", "Đội B")
         logo_a = match.get("teamA", {}).get("picture", "")
@@ -118,7 +114,7 @@ def build_m3u():
         if not hls_list:
             continue
 
-        # Chỉ lọc lấy duy nhất luồng phát ổn định (ưu tiên hdplaylink / bỏ qua edgemaxcdn gây lỗi)
+        # Lọc lấy link SD ổn định (hdplaylink)
         valid_stream = None
         for stream in hls_list:
             url = stream.get("url", "")
@@ -134,7 +130,7 @@ def build_m3u():
             continue
 
         match_count += 1
-        title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name} - SD)"
+        title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name})"
 
         m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV" , {title}\n')
         m3u_lines.append(f'#EXTVLCOPT:http-referrer={HOME_DOMAIN}/\n')
