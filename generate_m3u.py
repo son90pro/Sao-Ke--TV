@@ -19,11 +19,9 @@ def fetch_matches_from_api():
     """Gọi trực tiếp API danh sách trận đấu với dải thời gian mã hóa an toàn"""
     now_vn = datetime.now(VN_TZ)
     
-    # Tạo chuỗi thời gian thô ISO
     from_raw = (now_vn - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00+07:00")
     to_raw = (now_vn + timedelta(days=3)).strftime("%Y-%m-%dT23:59:59+07:00")
     
-    # Mã hóa URL an toàn bằng urllib.parse.quote (tránh lỗi xung đột dấu %)
     from_date = urllib.parse.quote(from_raw, safe='')
     to_date = urllib.parse.quote(to_raw, safe='')
 
@@ -38,18 +36,24 @@ def fetch_matches_from_api():
     )
     
     try:
-        print(f"Đang gọi API danh sách trận đấu: {api_url}")
+        print(f"Đang gọi API: {api_url}")
         res = requests.get(api_url, headers=HEADERS, impersonate="chrome120", timeout=12)
+        print(f"HTTP Status Code: {res.status_code}")
+        
         if res.status_code == 200:
             data = res.json()
-            if data.get("success"):
-                matches = data.get("data", {}).get("matches", [])
-                print(f"-> Lấy thành công {len(matches)} trận đấu từ API.")
-                return matches
+            # In ra một phần dữ liệu để kiểm tra log trên GitHub
+            print(f"Phản hồi JSON success: {data.get('success')}")
+            
+            matches = data.get("data", {}).get("matches", [])
+            print(f"-> Lấy thành công {len(matches)} trận đấu từ API.")
+            return matches, data
+        else:
+            print(f"Phản hồi thô khi lỗi: {res.text[:300]}")
     except Exception as e:
         print(f"Lỗi gọi API matches: {e}")
         
-    return []
+    return [], {}
 
 def build_m3u():
     m3u_lines = ["#EXTM3U x-tvg-url=\"\"\n\n"]
@@ -61,7 +65,12 @@ def build_m3u():
     match_count = 0
     stream_count = 0
 
-    matches = fetch_matches_from_api()
+    matches, raw_json = fetch_matches_from_api()
+    
+    # Lấy danh sách team từ relation nếu có trong response tổng
+    relation = raw_json.get("data", {}).get("relation", {})
+    teams_list = relation.get("teams", [])
+    team_map = {t["id"]: t for t in teams_list}
 
     for item in matches:
         info = item.get("info", {})
@@ -86,9 +95,16 @@ def build_m3u():
 
         time_str = match_dt_vn.strftime("%H:%M %d/%m")
 
-        team_a_name = info.get("homeTeamName", "Đội nhà")
-        team_b_name = info.get("awayTeamName", "Đội khách")
-        logo = info.get("homeTeamLogo", "")
+        # Lấy thông tin tên đội và logo từ team_map hoặc info
+        home_id = info.get("homeTeamId")
+        away_id = info.get("awayTeamId")
+        
+        home_team = team_map.get(home_id, {})
+        away_team = team_map.get(away_id, {})
+        
+        team_a_name = home_team.get("name") or info.get("homeTeamName", "Đội nhà")
+        team_b_name = away_team.get("name") or info.get("awayTeamName", "Đội khách")
+        logo = home_team.get("logo") or info.get("homeTeamLogo", "")
 
         links = livestreams.get("links", [])
         if not links:
