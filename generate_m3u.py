@@ -1,4 +1,5 @@
 import os
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from curl_cffi import requests
 
@@ -15,10 +16,16 @@ HEADERS = {
 }
 
 def fetch_matches_from_api():
-    """Gọi trực tiếp API danh sách trận đấu với dải thời gian linh hoạt"""
+    """Gọi trực tiếp API danh sách trận đấu với dải thời gian mã hóa an toàn"""
     now_vn = datetime.now(VN_TZ)
-    from_date = (now_vn - timedelta(days=1)).strftime("%Y-%m-%dT00%3A00%3A00%2B07%3A00")
-    to_date = (now_vn + timedelta(days=2)).strftime("%Y-%m-%dT23%3A59%3A59%2B07%3A00")
+    
+    # Tạo chuỗi thời gian thô ISO
+    from_raw = (now_vn - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00+07:00")
+    to_raw = (now_vn + timedelta(days=3)).strftime("%Y-%m-%dT23:59:59+07:00")
+    
+    # Mã hóa URL an toàn bằng urllib.parse.quote (tránh lỗi xung đột dấu %)
+    from_date = urllib.parse.quote(from_raw, safe='')
+    to_date = urllib.parse.quote(to_raw, safe='')
 
     api_url = (
         f"{BASE_DOMAIN}/api/matches/?lang=vi"
@@ -54,7 +61,7 @@ def build_m3u():
     match_count = 0
     stream_count = 0
 
-    matches = fetch_match_from_api_wrapper = fetch_matches_from_api()
+    matches = fetch_matches_from_api()
 
     for item in matches:
         info = item.get("info", {})
@@ -65,7 +72,6 @@ def build_m3u():
             continue
 
         try:
-            # Parse thời gian chuẩn từ API (e.g. 2026-11-15T21:00:00+07:00)
             match_dt_vn = datetime.fromisoformat(match_time_str)
         except Exception:
             try:
@@ -74,13 +80,12 @@ def build_m3u():
             except Exception:
                 continue
 
-        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo múi giờ Việt Nam (UTC+7)
+        # Lọc các trận diễn ra trong ngày hôm nay và ngày mai theo giờ Việt Nam (UTC+7)
         if match_dt_vn.date() not in [today, tomorrow]:
             continue
 
         time_str = match_dt_vn.strftime("%H:%M %d/%m")
 
-        # Lấy tên đội bóng từ info hoặc giả lập nếu thiếu
         team_a_name = info.get("homeTeamName", "Đội nhà")
         team_b_name = info.get("awayTeamName", "Đội khách")
         logo = info.get("homeTeamLogo", "")
