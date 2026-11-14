@@ -1,5 +1,4 @@
 import os
-import urllib.parse
 from datetime import datetime, timedelta, timezone
 from curl_cffi import requests
 
@@ -11,7 +10,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
     "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
-    "X-Requested-With": "XMLHttpRequest", # Header mấu chốt để vượt lỗi browser_navigation_forbidden
+    "X-Requested-With": "XMLHttpRequest",
     "Origin": BASE_DOMAIN,
     "Referer": f"{BASE_DOMAIN}/",
     "Sec-Fetch-Site": "same-origin",
@@ -20,28 +19,35 @@ HEADERS = {
 }
 
 def fetch_matches_from_api():
-    """Gọi trực tiếp API danh sách trận đấu với dải thời gian mã hóa an toàn"""
+    """Gọi API danh sách trận đấu sử dụng params chuẩn hóa tự động"""
     now_vn = datetime.now(VN_TZ)
     
-    from_raw = (now_vn - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00+07:00")
-    to_raw = (now_vn + timedelta(days=3)).strftime("%Y-%m-%dT23:59:59+07:00")
-    
-    from_date = urllib.parse.quote(from_raw, safe='')
-    to_date = urllib.parse.quote(to_raw, safe='')
+    from_str = (now_vn - timedelta(days=1)).strftime("%Y-%m-%dT00:00:00+07:00")
+    to_str = (now_vn + timedelta(days=3)).strftime("%Y-%m-%dT23:59:59+07:00")
 
-    api_url = (
-        f"{BASE_DOMAIN}/api/matches/?lang=vi"
-        "&returnList=info&returnList=livestreams"
-        "&isIncludedRelation=true&sortMatchTime=asc"
-        f"&fromDate={from_date}&toDate={to_date}"
-        "&statuses=LIVE&statuses=UPCOMING"
-        "&livestreamsStatuses=LIVE&livestreamsStatuses=UPCOMING"
-        "&page=1&limit=100"
-    )
+    api_url = f"{BASE_DOMAIN}/api/matches/"
+    
+    # Sử dụng danh sách tuple để hỗ trợ các tham số trùng lặp (nhiều statuses, returnList)
+    params = [
+        ("lang", "vi"),
+        ("returnList", "info"),
+        ("returnList", "livestreams"),
+        ("isIncludedRelation", "true"),
+        ("sortMatchTime", "asc"),
+        ("fromDate", from_str),
+        ("toDate", to_str),
+        ("statuses", "LIVE"),
+        ("statuses", "UPCOMING"),
+        ("livestreamsStatuses", "LIVE"),
+        ("livestreamsStatuses", "UPCOMING"),
+        ("companyIds", "2"),
+        ("page", "1"),
+        ("limit", "100")
+    ]
     
     try:
-        print(f"Đang gọi API: {api_url}")
-        res = requests.get(api_url, headers=HEADERS, impersonate="chrome120", timeout=12)
+        print(f"Đang gọi API từ {from_str} đến {to_str}")
+        res = requests.get(api_url, params=params, headers=HEADERS, impersonate="chrome120", timeout=12)
         print(f"HTTP Status Code: {res.status_code}")
         
         if res.status_code == 200:
