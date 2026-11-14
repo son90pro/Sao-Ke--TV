@@ -44,11 +44,6 @@ def get_match_ids_from_web():
             found_ids = re.findall(r'[a-f0-9]{24}', res.text)
             for fid in found_ids:
                 match_ids.add(fid)
-            
-            # Quét thêm các slug html để lấy link chi tiết trận
-            slugs = re.findall(r'href="/([a-z0-9-]+-([a-f0-9]{24})\.html)"', res.text)
-            for full_slug, m_id in slugs:
-                match_ids.add(m_id)
     except Exception as e:
         print(f"Lỗi quét trang chủ: {e}")
         
@@ -84,25 +79,6 @@ def fetch_live_data(match_ids):
             
     return list(unique_lives.values())
 
-def get_tokenized_streams(slug):
-    """Truy cập trang chi tiết trận đấu để bóc tách link HLS có gắn token động thực tế"""
-    if not slug:
-        return []
-    
-    page_url = f"{HOME_DOMAIN}/{slug}.html"
-    html_headers = HEADERS.copy()
-    html_headers["Accept"] = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-    
-    try:
-        res = requests.get(page_url, headers=html_headers, impersonate="chrome120", timeout=8)
-        if res.status_code == 200:
-            # Quét các đường dẫn m3u8 có chứa token 100ycdn hoặc mediastation
-            found_hls = re.findall(r'(https://[^\s<>"]+?playlist\.m3u8[^\s<>"]*?)["\']', res.text)
-            return list(set(found_hls))
-    except Exception:
-        pass
-    return []
-
 def build_m3u():
     m3u_lines = ["#EXTM3U\n\n"]
     
@@ -132,10 +108,6 @@ def build_m3u():
         team_b = match.get("teamB", {}).get("name", "Đội B")
         logo_a = match.get("teamA", {}).get("picture", "")
         blv_name = match.get("blv", "BLV")
-        slug = match.get("slug")
-
-        # Thử quét link token động từ trang html chi tiết
-        tokenized_links = get_tokenized_streams(slug)
 
         hls_list = match.get("hlsUrls", [])
         if not hls_list and "blvs" in match:
@@ -143,45 +115,33 @@ def build_m3u():
                 if b.get("hlsUrls"):
                     hls_list.extend(b["hlsUrls"])
 
-        if not hls_list and not tokenized_links:
+        if not hls_list:
             continue
 
         match_count += 1
 
-        # Xử lý đưa các luồng vào M3U (cả SD và HD)
-        processed_urls = set()
-
-        # 1. Ưu tiên đưa các link token động quét được từ trang web vào trước (đảm bảo luồng HD sống)
-        for t_url in tokenized_links:
-            if t_url in processed_urls:
-                continue
-            processed_urls.add(t_url)
-            
-            quality = "HD" if "edgemax" in t_url or "100ycdn" in t_url else "SD"
-            title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name} - {quality}) [hls]"
-
-            m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV" , {title}\n')
-            m3u_lines.append(f'#EXTVLCOPT:http-referrer={HOME_DOMAIN}/\n')
-            m3u_lines.append(f'{t_url}\n\n')
-            stream_count += 1
-
-        # 2. Đưa các link từ API chuẩn (SD / HD dự phòng)
         for stream in hls_list:
-            stream_url = stream.get("url", "")
+            raw_url = stream.get("url", "")
             quality = stream.get("name", "SD").upper()
             
-            if not stream_url or stream_url in processed_urls:
+            if not raw_url:
                 continue
-            processed_urls.add(stream_url)
 
-            title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name} - {quality}) [hls]"
+            # Xử lý thông minh cho luồng HD qua edgemaxcdn: 
+            # Bọc qua proxy player mediastation để trình phát IPTV giải mã token thành công giống như trên web
+            if "edgemaxcdn.org" in raw_url:
+                stream_url = f"https://sk.mediastation.live/?autoplay=1&muted=1&sk=2&url={raw_url}"
+            else:
+                stream_url = raw_url
+
+            title = f"{time_str} ⚽ {team_a} vs {team_b} ({blv_name} - {quality})"
 
             m3u_lines.append(f'#EXTINF:-1 tvg-logo="{logo_a}" group-title="Sao Kê TV" , {title}\n')
             m3u_lines.append(f'#EXTVLCOPT:http-referrer={HOME_DOMAIN}/\n')
             m3u_lines.append(f'{stream_url}\n\n')
             stream_count += 1
 
-    print(f"Đã xử lý {match_count} trận đấu -> Xuất tổng cộng {stream_count} luồng (Đã bao gồm SD và HD có token).")
+    print(f"Đã xử lý {match_count} trận đấu -> Xuất tổng cộng {stream_count} luồng (Đã fix luồng HD).")
     return "".join(m3u_lines)
 
 def main():
